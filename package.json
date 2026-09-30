@@ -1,0 +1,5 @@
+{
+  "name":"stickup-foundation-003","private":true,"version":"0.0.3","workspaces":["client","server","shared"],
+  "scripts":{"dev":"concurrently -n server,client -c blue,green \"npm run dev -w server\" \"npm run dev -w client\"","build":"npm run build -w server && npm run build -w client","check":"npm run build"},
+  "devDependencies":{"concurrently":"^9.1.2","typescript":"^5.8.3"}
+}

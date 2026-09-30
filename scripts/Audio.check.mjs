@@ -1,0 +1,16 @@
+import assert from 'node:assert/strict';
+import {readFile,rm} from 'node:fs/promises';
+import {build} from 'esbuild';
+import * as THREE from 'three';
+const file='scripts/.audio-check.mjs',original={fetch:globalThis.fetch,context:globalThis.AudioContext};const sounds=['m4','ak','mag-out','mag-in','bolt','step','land','hit','jump','impact','wind','m4-2','ak-2','step-2','step-3','step-4','step-5','step-6'];
+try{
+ for(const name of sounds){const b=await readFile(`client/public/audio/${name}.wav`);assert.equal(b.toString('ascii',0,4),'RIFF');assert.equal(b.toString('ascii',8,12),'WAVE');assert.equal(b.readUInt32LE(24),44100);let peak=0;for(let i=44;i<b.length-1;i+=2)peak=Math.max(peak,Math.abs(b.readInt16LE(i)));assert.ok(peak>1000&&peak<32767,'audible unclipped WAV '+name)}
+ const started=[];let context;
+ class Node{connect(node){this.next=node;return node}disconnect(){}}
+ class AudioMock{state='running';destination={};constructor(){context=this}resume(){this.state='running';return Promise.resolve()}createGain(){const n=new Node();n.gain={value:1};return n}createStereoPanner(){const n=new Node();n.pan={value:0};return n}createBiquadFilter(){const n=new Node();n.frequency={value:0};n.Q={value:0};return n}createBufferSource(){const n=new Node();n.playbackRate={value:1};n.start=()=>started.push(n);return n}decodeAudioData(bytes){return Promise.resolve({name:bytes.name})}}
+ globalThis.AudioContext=AudioMock;globalThis.fetch=async url=>{const b=await readFile('client/public'+url),a=b.buffer.slice(b.byteOffset,b.byteOffset+b.byteLength);a.name=url.split('/').at(-1).replace('.wav','');return {arrayBuffer:async()=>a}};
+ await build({entryPoints:['client/src/game/GameAudio.ts'],outfile:file,bundle:true,format:'esm',packages:'external'});const {GameAudio}=await import('./.audio-check.mjs');const audio=new GameAudio();await audio.unlock();audio.update(new THREE.PerspectiveCamera());audio.play('m4',new THREE.Vector3());audio.play('ak',new THREE.Vector3(10,0,0));
+ assert.equal(started[1].buffer.name,'m4');assert.equal(started[2].buffer.name,'ak');assert.ok(started[2].next.gain.value<started[1].next.gain.value,'distance attenuation');assert.ok(started[2].next.next.pan.value>.5,'stereo placement');
+ audio.reload(0,1,new THREE.Vector3());assert.deepEqual(started.slice(-3).map(s=>s.buffer.name),['mag-out','mag-in','bolt'],'reload milestones');audio.play('m4');assert.equal(started.at(-1).buffer.name,'m4-2','alternate recorded gunshot');for(let i=0;i<6;i++)audio.play('step');assert.deepEqual(started.slice(-6).map(s=>s.buffer.name),['step','step-2','step-3','step-4','step-5','step-6'],'six real footfall variants');assert.equal(started.at(-1).next.type,'lowpass','ground contacts softened');assert.equal(started.at(-1).next.frequency.value,2200);audio.play('step',new THREE.Vector3(21,0,0));assert.equal(started.at(-1).buffer.name,'step-6','distant footsteps culled');const before=started.length;context.state='suspended';audio.play('m4');assert.equal(started.length,before,'suspended audio creates no voice');
+ console.log('PASS: eighteen valid audible/unclipped assets, gesture unlock, distinct weapon reports, distance/stereo placement and reload milestone sounds.');
+}finally{globalThis.fetch=original.fetch;globalThis.AudioContext=original.context;await rm(file,{force:true})}

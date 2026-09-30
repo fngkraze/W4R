@@ -1,0 +1,31 @@
+import assert from 'node:assert/strict';
+import {build} from 'esbuild';
+import {rm} from 'node:fs/promises';
+const file='scripts/.settings-input-check.mjs';
+const handlers={};
+globalThis.addEventListener=(t,fn)=>{(handlers[t]??=[]).push(fn)};
+globalThis.document={addEventListener(){}};
+const fire=(t,e)=>{for(const h of handlers[t]??[])h({preventDefault(){},stopPropagation(){},...e})};
+try{
+ await build({stdin:{contents:"export {SettingsStore,keyLabel,defaultBindings} from './client/src/settings/Settings'; export {Input} from './client/src/input/Input';",resolveDir:process.cwd(),loader:'ts'},outfile:file,bundle:true,format:'esm',packages:'external'});
+ const {SettingsStore,keyLabel,defaultBindings,Input}=await import('./.settings-input-check.mjs');
+ const store=new SettingsStore();
+ store.rebind('reload','KeyQ');assert.equal(store.value.bindings.reload,'KeyQ');
+ store.rebind('jump','KeyW');assert.equal(store.value.bindings.forward,'Space','binding a used key swaps, so nothing is left unbound');
+ store.resetBindings();assert.deepEqual(store.value.bindings,defaultBindings);
+ store.setNumber('sensitivity',99);assert.equal(store.value.sensitivity,3,'sensitivity is clamped');store.setNumber('fov',10);assert.equal(store.value.fov,50);
+ store.setName('  Ghost<script> Rider  ');assert.equal(store.value.name,'Ghostscript Ri','names are cleaned and limited to 16 characters');store.setName('   ');assert.equal(store.value.name,'Player','an empty name falls back to Player');
+ store.resetAll();assert.equal(store.value.sensitivity,1);assert.equal(store.value.name,'Player');
+ assert.deepEqual(['KeyW','Space','Mouse0','Mouse2'].map(keyLabel),['W','Space','Left Mouse','Right Mouse']);
+ let captured=true,blocked=false;const input=new Input(()=>captured,store,()=>blocked),fires=[];
+ input.onAction=(a,d)=>{if(a==='fire')fires.push(d)};
+ fire('keydown',{code:'KeyW'});assert.equal(input.axis().z,1);fire('keyup',{code:'KeyW'});
+ store.rebind('forward','KeyI');fire('keydown',{code:'KeyW'});assert.equal(input.axis().z,0,'old key no longer moves');fire('keydown',{code:'KeyI'});assert.equal(input.axis().z,1,'rebound key moves');
+ fire('mousedown',{button:0});fire('mouseup',{button:0});assert.deepEqual(fires,[true,false]);
+ store.rebind('fire','KeyG');fire('keydown',{code:'KeyG'});fire('keyup',{code:'KeyG'});assert.deepEqual(fires.slice(2),[true,false],'fire can be bound to a key');
+ fire('mousedown',{button:0});assert.equal(fires.length,4,'left mouse stops firing after rebind');
+ fire('keydown',{code:'KeyX'});assert.ok(input.crouch());fire('keyup',{code:'KeyX'});assert.ok(input.crouch(),'toggle persists');fire('keydown',{code:'KeyX'});assert.ok(!input.crouch());
+ blocked=true;store.rebind('aim','Mouse2');const n=fires.length;fire('mousedown',{button:2});assert.equal(fires.length,n);
+ captured=false;store.rebind('left','KeyJ');fire('keydown',{code:'KeyJ'});assert.equal(input.axis().x,0,'keys are ignored while the mouse is not captured');
+ console.log('PASS: settings clamping, rebinding with swap, key/mouse fire bindings, toggle crouch, menu input blocking.');
+}finally{await rm(file,{force:true})}
